@@ -1,0 +1,4 @@
+torch>=2.1
+nltk>=3.8
+pandas>=2.0
+numpy>=1.24

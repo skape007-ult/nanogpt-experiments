@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ML model weights & data
+trained_weights/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Training data / input texts
+input_texts/
+data/*.bin
+data/*.json
+cleaned_chat.txt
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE / local editor settings
+.idea/
+.vscode/
+*.iml
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+*.tmp
+wandb/
+runs/
