@@ -231,7 +231,9 @@ class TransformerLM(nn.Module):
             return logits, None
 
         B, T, C = logits.shape
-        loss = F.cross_entropy(logits.view(B * T, C), targets.view(B * T))
+        # [CHANGED] ignore_index=-1 (as in nanoGPT) — train_v3.py sets <UNK>
+        # targets to -1 so the model is never rewarded for predicting <UNK>
+        loss = F.cross_entropy(logits.view(B * T, C), targets.view(B * T), ignore_index=-1)
         return logits, loss
 
     # [NEW] configure_optimizers — separates decay and no-decay parameter groups
@@ -264,7 +266,19 @@ class TransformerLM(nn.Module):
         optimizer = torch.optim.AdamW(optim_groups, lr=lr, betas=(0.9, 0.95))
         return optimizer
 
-    def generate(self, idx, max_new_tokens, temperature=0.8, top_k=40, ban_token_ids=None):
+    # [CHANGED] generate() gained three optional sampling controls (defaults keep
+    #           the old behaviour):
+    #   repetition_penalty — CTRL-style penalty on tokens already generated in
+    #                        this call, breaks "no no no no" loops
+    #   top_p              — nucleus sampling: keep the smallest set of tokens
+    #                        whose probability mass exceeds top_p
+    #   stop_token_ids     — stop as soon as one is sampled (e.g. the next
+    #                        speaker tag), instead of always running max_new_tokens
+    def generate(self, idx, max_new_tokens, temperature=0.8, top_k=40, ban_token_ids=None,
+                 top_p=None, repetition_penalty=1.0, stop_token_ids=None):
+        prompt_len = idx.size(1)
+        stop = set(stop_token_ids or [])
+
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
@@ -274,15 +288,32 @@ class TransformerLM(nn.Module):
                 for tid in ban_token_ids:
                     logits[:, tid] = -float('Inf')
 
+            if repetition_penalty != 1.0 and idx.size(1) > prompt_len:
+                seen = torch.unique(idx[:, prompt_len:])
+                scores = logits[:, seen]
+                logits[:, seen] = torch.where(scores > 0, scores / repetition_penalty,
+                                              scores * repetition_penalty)
+
             logits = logits / temperature
 
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
 
+            if top_p is not None:
+                sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+                sorted_probs = F.softmax(sorted_logits, dim=-1)
+                # drop a token if the mass *before* it already exceeds top_p
+                remove = (torch.cumsum(sorted_probs, dim=-1) - sorted_probs) > top_p
+                sorted_logits[remove] = -float('Inf')
+                logits = torch.full_like(logits, -float('Inf')).scatter(1, sorted_idx, sorted_logits)
+
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+            if stop and idx.size(0) == 1 and idx_next.item() in stop:
+                break
 
         return idx
 
